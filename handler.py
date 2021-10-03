@@ -8,7 +8,6 @@ def save_info_in_file(user_id: int, command: str, city: str = '') -> None:
     Имя файла содержит id Телеграмм пользователя, имеет расширение .info.
     """
 
-    logger.add('debug.log', format='{time} {level} {message}', level='DEBUG')
     logger.info(' - '.join(('-'.join(('user_id', str(user_id))), command)))
     command = ''.join(('Запрос: ', command))
     fmt = '%Y.%m.%d %H:%M:%S'
