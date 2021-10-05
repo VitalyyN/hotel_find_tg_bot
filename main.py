@@ -5,7 +5,7 @@ from handler import save_info_in_file
 from loader import rapidapi
 from loader import calendar, calendar_1_callback, calendar_2_callback
 from loader import now
-from telebot.types import CallbackQuery, ReplyKeyboardRemove
+from telebot.types import CallbackQuery, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 
 
 global hotels
@@ -74,7 +74,14 @@ def callback_inline(call: 'CallbackQuery') -> None:
                          reply_markup=markup)
 
 
-def set_max_size(message):
+@bot.callback_query_handler(func=lambda call: call.data in hotels[call.from_user.id]['locations_list'].keys())
+def callback_location(call):
+    hotels[call.from_user.id]['location'] = call.data
+    msg = bot.send_message(call.from_user.id, f'Выбрана локация: {call.data}', reply_markup=markup_next)
+    bot.register_next_step_handler(msg, choose_date_in)
+
+
+def set_max_size(message: 'Message') -> None:
     """Функция, запрашивает количество отелей для показа"""
 
     if not message.text.isdigit():
@@ -83,31 +90,31 @@ def set_max_size(message):
     else:
         hotels[message.from_user.id]['max_size'] = message.text
         bot.send_message(message.from_user.id, 'В каком городе искать отели?')
-        bot.register_next_step_handler(message, find_location)
+        bot.register_next_step_handler(message, city_location_markup)
 
 
-def find_location(message: 'Message') -> None:
+def city_location_markup(message: 'Message') -> None:
     """Функция, запрашивает локацию для поиска"""
 
     city = message.text
     hotels[message.from_user.id]['city'] = city
     destination = rapidapi.rapidapi_search(city)
+    if destination is None:
+        bot.send_message(message.from_user.id, 'Ошибка подключения. Попробуй позже.', reply_markup=markup)
+        return
+    if len(destination) == 0:
+        bot.send_message(message.from_user.id, 'Запрашиваемый город не найден. Продолжить?', reply_markup=markup)
+        return
     hotels[message.from_user.id]['locations_list'] = destination
+    location_markup = InlineKeyboardMarkup()
     for elem in destination.keys():
-        bot.send_message(message.from_user.id, elem)
-    bot.send_message(message.from_user.id, 'В какой локации из списка искать отели?')
-    bot.register_next_step_handler(message, choose_date_in)
+        location_markup.add(InlineKeyboardButton(text=elem, callback_data=elem))
+    bot.send_message(message.from_user.id, 'В какой локации искать отели?', reply_markup=location_markup)
 
 
 def choose_date_in(message: 'Message') -> None:
     """Функция, запрашивает дату заезда в отель"""
 
-    location = message.text
-    hotels[message.from_user.id]['location'] = location
-    if location not in hotels[message.from_user.id]['locations_list'].keys():
-        bot.send_message(message.from_user.id, 'Ошибка! Повтори ввод')
-        bot.register_next_step_handler(message, choose_date_in)
-        return
     bot.send_message(
         message.from_user.id,
         'Какая дата заезда?',
@@ -142,16 +149,18 @@ def find_hotel(message: 'Message') -> None:
     max_size_page = int(hotels[message.from_user.id]['max_size'])
     date_in = hotels[message.from_user.id]['date_in']
     date_out = hotels[message.from_user.id]['date_out']
-    bot.send_message(message.from_user.id, 'Ищу варианты', reply_markup=ReplyKeyboardRemove())
+    bot.send_message(message.from_user.id, 'Ищу варианты...', reply_markup=ReplyKeyboardRemove())
     hotels[message.from_user.id]['hotels'] = rapidapi.hotel_info(destination_id, command, max_size_page, date_in, date_out)
-    i = 1
+    if hotels[message.from_user.id]['hotels'] is None:
+        bot.send_message(message.from_user.id, 'Ошибка подключения. Попробуй позже.', reply_markup=markup)
+        return
     for elem in hotels[message.from_user.id]['hotels']:
-        bot.send_message(message.from_user.id, i)
-        bot.send_message(message.from_user.id, ': '.join(('Отель', elem.name)))
-        bot.send_message(message.from_user.id, ': '.join(('Адрес', elem.address)))
-        bot.send_message(message.from_user.id, ': '.join(('Стоимость за все время', elem.price)))
-        bot.send_message(message.from_user.id, ': '.join(('Удаленность от центра', elem.distance)))
-        i += 1
+        text = "\n\n".join((': '.join(('Отель', elem.name)),
+                            ': '.join(('Адрес', elem.address)),
+                            ': '.join(('Стоимость за все время', elem.price)),
+                            ': '.join(('Удаленность от центра', elem.distance))))
+        bot.send_message(message.from_user.id, text)
+
     bot.send_message(message.from_user.id, 'Продолжить?', reply_markup=markup)
 
 
