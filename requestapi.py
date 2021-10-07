@@ -17,15 +17,16 @@ class Hotel:
 class RapidApi:
     """ Класс, работает с API сайта https://rapidapi.com/apidojo/api/hotels4/"""
 
-    def __init__(self, city: str, api_key: Optional[Any] = None) -> None:
+    def __init__(self, api_key: Optional[Any] = None) -> None:
         self.max_size = 15
+        self.max_photos = 30
         self.api_key = api_key
         self.url_search: str = 'https://hotels4.p.rapidapi.com/locations/search'
         self.url_properties_list: str = 'https://hotels4.p.rapidapi.com/properties/list'
         self.url_hotel_photos: str = 'https://hotels4.p.rapidapi.com/properties/get-hotel-photos'
 
     @logger.catch
-    def rapidapi_search(self, city) -> Optional[Dict[str, str]]:
+    def rapidapi_search(self, city: str) -> Optional[Dict[str, str]]:
         """
         Метод класса, делает get-запрос на сайт
         https://rapidapi.com/apidojo/api/hotels4/
@@ -54,20 +55,38 @@ class RapidApi:
         return destination_id
 
     @logger.catch
-    def hotel_info(self, destination_id, option: str, max_size: int, date_in: str, date_out: str) -> Optional[List['Hotel']]:
+    def select_best_hotels(self, hotels: List['Hotel'], max_price: float, max_distance: float, max_size: int):
+        res_list: List['Hotel'] = list()
+        for hotel in hotels:
+            if len(res_list) >= max_size:
+                break
+            price = hotel.price.split()[0]
+            price = price.split(',')
+            price = int(''.join(price))
+            distance = hotel.distance.split()[0]
+            distance = distance.split(',')
+            distance = float('.'.join(distance))
+            if price <= max_price and distance <= max_distance:
+                res_list.append(hotel)
+
+        return res_list
+
+    @logger.catch
+    def hotel_info(self, destination_id: str, option: str, max_size: int, date_in: str, date_out: str) -> Optional[List['Hotel']]:
         """Метод класса, делает get-запрос на сайт
         https://rapidapi.com/apidojo/api/hotels4/,
         получают информацию об отелях.
 
-        :return: list с объектами Hotel.
+        :return: list с объектами Hotel; None, если запрос прошел неудачно.
         """
 
-        sort_order: str = ''
-        if option == 'low' or option is None:
+        sort_order = ''
+
+        if option == "low":
             sort_order = 'PRICE'
-        elif sort_order == 'high':
+        elif option == "high":
             sort_order = 'PRICE_HIGHEST_FIRST'
-        else:
+        elif option == "best":
             sort_order = 'DISTANCE_FROM_LANDMARK'
 
         headers = {
@@ -78,7 +97,9 @@ class RapidApi:
         if destination_id is None:
             return None
 
-        if max_size > self.max_size:
+        if sort_order == 'DISTANCE_FROM_LANDMARK':
+            max_size = 25
+        elif max_size > self.max_size:
             max_size = self.max_size
 
         hotels: list = list()
@@ -90,7 +111,7 @@ class RapidApi:
 
         try:
             logger.info('request rapidapi-properties_list')
-            response = requests.get(self.url_properties_list, params=querystring, headers=headers)
+            response = requests.get(self.url_properties_list, params=querystring, headers=headers, timeout=10)
         except Exception:
             logger.error('Error in request rapidapi-properties_list')
             if len(hotels) > 0:
@@ -112,3 +133,39 @@ class RapidApi:
                 continue
 
         return hotels
+
+    @logger.catch
+    def hotel_photo(self, hotel_id: str, max_photos: int) -> Optional[List[str]]:
+        """Метод класса, делает get-запрос на сайт
+        https://rapidapi.com/apidojo/api/hotels4/,
+        получает фотографии выбранного отеля по id.
+
+        :return: list с объектами Hotel; None, если запрос прошел неудачно.
+        """
+
+        if max_photos > self.max_photos:
+            max_photos = self.max_photos
+
+        querystring = {"id": f"{hotel_id}"}
+        headers = {
+            'x-rapidapi-host': "hotels4.p.rapidapi.com",
+            'x-rapidapi-key': f"{self.api_key}"
+        }
+
+        try:
+            logger.info('request rapidapi-find_photo')
+            response_dict = requests.get(self.url_hotel_photos, params=querystring, headers=headers, timeout=10).json()
+        except Exception:
+            logger.error('Error in request rapidapi-find_photo')
+            return None
+
+        size = 'w'
+        photo_urls: List[str] = list()
+        i = 1
+        for value in response_dict['hotelImages']:
+            if i > max_photos:
+                break
+            photo_urls.append(value['baseUrl'].format(size=size))
+            i += 1
+
+        return photo_urls

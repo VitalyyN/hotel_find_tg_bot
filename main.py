@@ -5,7 +5,7 @@ from handler import save_info_in_file
 from loader import rapidapi
 from loader import calendar, calendar_1_callback, calendar_2_callback
 from loader import now
-from telebot.types import CallbackQuery, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telebot.types import CallbackQuery, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 
 global hotels
@@ -20,15 +20,22 @@ def get_text_message(message: 'Message') -> None:
     if message.text.lower() == 'привет' or message.text.lower() == '/start':
         bot.send_message(message.from_user.id, 'Привет. Я помогу найти лучший отель в твоем городе', reply_markup=markup)
     elif message.text == 'Найти дешевые' or message.text == '/lowprice':
-        bot.send_message(message.from_user.id, 'Сколько отелей показывать? (не более 15)', reply_markup=ReplyKeyboardRemove())
+        bot.send_message(message.from_user.id, 'Сколько отелей показывать? (не более 15)',
+                         reply_markup=ReplyKeyboardRemove())
         hotels[message.from_user.id] = {'command': 'low'}
         bot.register_next_step_handler(message, set_max_size)
         save_info_in_file(message.from_user.id, '/lowprice')
     elif message.text == 'Найти дорогие' or message.text == '/highprice':
-        hotels[message.from_user.id]['command'] = 'high'
+        bot.send_message(message.from_user.id, 'Сколько отелей показывать? (не более 15)',
+                         reply_markup=ReplyKeyboardRemove())
+        hotels[message.from_user.id] = {'command': 'high'}
+        bot.register_next_step_handler(message, set_max_size)
         save_info_in_file(message.from_user.id, '/highprice')
     elif message.text == 'Лучшие предложения' or message.text == '/bestdeal':
-        hotels[message.from_user.id]['command'] = 'best'
+        bot.send_message(message.from_user.id, 'Сколько отелей показывать? (не более 15)',
+                         reply_markup=ReplyKeyboardRemove())
+        hotels[message.from_user.id] = {'command': 'best'}
+        bot.register_next_step_handler(message, set_max_size)
         save_info_in_file(message.from_user.id, '/bestdeal')
     elif message.text == 'Помощь' or message.text == '/help':
         bot.send_message(message.from_user.id, help_text, reply_markup=markup)
@@ -45,9 +52,8 @@ def callback_inline(call: 'CallbackQuery') -> None:
     name, action, year, month, day = call.data.split(calendar_1_callback.sep)
     date = calendar.calendar_query_handler(bot=bot, call=call, name=name, action=action, year=year, month=month, day=day)
     if action == 'DAY':
-        msg = bot.send_message(call.from_user.id,
-                         f'Выбрана дата: {date.strftime("%d.%m.%Y")}',
-                         reply_markup=markup_next)
+        msg = bot.send_message(call.from_user.id, f'Выбрана дата: {date.strftime("%d.%m.%Y")}',
+                               reply_markup=markup_next)
         hotels[call.from_user.id]['date_in'] = date.strftime("%Y-%m-%d")
         bot.register_next_step_handler(msg, choose_date_out)
     elif action == 'CANCEL':
@@ -63,22 +69,95 @@ def callback_inline(call: 'CallbackQuery') -> None:
     name, action, year, month, day = call.data.split(calendar_2_callback.sep)
     date = calendar.calendar_query_handler(bot=bot, call=call, name=name, action=action, year=year, month=month, day=day)
     if action == 'DAY':
-        msg = bot.send_message(call.from_user.id,
-                                f'Выбрана дата: {date.strftime("%d.%m.%Y")}',
-                                reply_markup=markup_next)
+        bot.send_message(call.from_user.id,
+                         f'Выбрана дата: {date.strftime("%d.%m.%Y")}',
+                         reply_markup=ReplyKeyboardRemove())
         hotels[call.from_user.id]['date_out'] = date.strftime("%Y-%m-%d")
-        bot.register_next_step_handler(msg, find_hotel)
+
+        markup_photos = InlineKeyboardMarkup()
+        yes_button = InlineKeyboardButton(text='Да', callback_data='yes')
+        no_button = InlineKeyboardButton(text='Нет', callback_data='no')
+        markup_photos.add(yes_button)
+        markup_photos.add(no_button)
+        bot.send_message(call.from_user.id, 'Показывать фото отелей?', reply_markup=markup_photos)
     elif action == 'CANCEL':
         bot.send_message(call.from_user.id,
                          'Отмена.Продолжить?',
                          reply_markup=markup)
 
 
+@bot.callback_query_handler(func=lambda call: call.data == 'yes' or call.data == 'no')
+def show_photos(call: 'CallbackQuery') -> None:
+    """Функция, запрашивает пользователя показывать ли фото отелей"""
+
+    if call.data == 'yes':
+        msg = bot.send_message(call.from_user.id,
+                               'Сколько фотографий показывать? (не более 30)',
+                               reply_markup=ReplyKeyboardRemove())
+        hotels[call.from_user.id]['show_photo'] = 'yes'
+        bot.register_next_step_handler(msg, set_max_photos)
+    elif call.data == 'no':
+        msg = bot.send_message(call.from_user.id, 'Без фото', reply_markup=markup_next)
+        hotels[call.from_user.id]['show_photo'] = 'no'
+        if hotels[call.from_user.id]['command'] == 'best':
+            msg = bot.send_message(call.from_user.id, 'Какая максимальная стоимость для выбора отелей? (в рублях)',
+                                   reply_markup=ReplyKeyboardRemove())
+            bot.register_next_step_handler(msg, choose_max_price)
+        else:
+            bot.register_next_step_handler(msg, find_hotel)
+
+
 @bot.callback_query_handler(func=lambda call: call.data in hotels[call.from_user.id]['locations_list'].keys())
-def callback_location(call):
+def callback_location(call: 'CallbackQuery'):
+    """Функция, запоминает локацию"""
+
     hotels[call.from_user.id]['location'] = call.data
     msg = bot.send_message(call.from_user.id, f'Выбрана локация: {call.data}', reply_markup=markup_next)
     bot.register_next_step_handler(msg, choose_date_in)
+
+
+def set_max_photos(message: 'Message') -> None:
+    """Функция, запрашивает количество фото для показа"""
+
+    if not message.text.isdigit():
+        bot.send_message(message.from_user.id, 'Ошибка. Повторите ввод', reply_markup=ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, set_max_photos)
+    else:
+        hotels[message.from_user.id]['max_photos'] = message.text
+        bot.send_message(message.from_user.id, f'Будут показаны по {message.text} фото', reply_markup=markup_next)
+        if hotels[message.from_user.id]['command'] == 'best':
+            bot.send_message(message.from_user.id, 'Какая максимальная стоимость для выбора отелей? (в рублях)',
+                             reply_markup=ReplyKeyboardRemove())
+            bot.register_next_step_handler(message, choose_max_price)
+        else:
+            bot.register_next_step_handler(message, find_hotel)
+
+
+def choose_max_price(message: 'Message') -> None:
+    """Функция, устанавливает максимальную стоимость отелей для показа"""
+
+    if not message.text.isdigit():
+        bot.send_message(message.from_user.id, 'Ошибка. Повторите ввод', reply_markup=ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, choose_max_price)
+    else:
+        hotels[message.from_user.id]['max_price'] = message.text
+        bot.send_message(message.from_user.id, 'На каком максимальном расстояние от центра искать отели (в км.)?',
+                         reply_markup=ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, choose_max_distance)
+
+
+def choose_max_distance(message: 'Message') -> None:
+    """Функция, устанавливает максимальное расстояние от центра для поиска"""
+
+    if not message.text.isdigit():
+        bot.send_message(message.from_user.id, 'Ошибка. Повторите ввод', reply_markup=ReplyKeyboardRemove())
+        bot.register_next_step_handler(message, choose_max_distance)
+    else:
+        hotels[message.from_user.id]['max_distance'] = message.text
+        bot.send_message(message.from_user.id,
+                         f'Ищу отели не дороже {hotels[message.from_user.id]["max_price"]} руб.'
+                         f' не далее чем {message.text} км. от центра', reply_markup=markup_next)
+        bot.register_next_step_handler(message, find_hotel)
 
 
 def set_max_size(message: 'Message') -> None:
@@ -142,26 +221,51 @@ def choose_date_out(message: 'Message') -> None:
 
 def find_hotel(message: 'Message') -> None:
     """Функция, ищет отели и выводит результат поиска в Телеграмм-боте"""
+    try:
+        location = hotels[message.from_user.id]['location']
+        command = hotels[message.from_user.id]['command']
+        destination_id = hotels[message.from_user.id]['locations_list'][location]
+        max_size_page = int(hotels[message.from_user.id]['max_size'])
+        date_in = hotels[message.from_user.id]['date_in']
+        date_out = hotels[message.from_user.id]['date_out']
+        bot.send_message(message.from_user.id, 'Ищу варианты...', reply_markup=ReplyKeyboardRemove())
+        hotels[message.from_user.id]['hotels'] = rapidapi.hotel_info(destination_id, command, max_size_page, date_in, date_out)
+        if hotels[message.from_user.id]['hotels'] is None:
+            bot.send_message(message.from_user.id, 'Ошибка подключения. Попробуй позже.', reply_markup=markup)
+            hotels.clear()
+            return
+        if command == 'best':
+            price = int(hotels[message.from_user.id]['max_price'])
+            distance = float(hotels[message.from_user.id]['max_distance'])
+            hotels[message.from_user.id]['hotels'] = rapidapi.select_best_hotels(
+                hotels[message.from_user.id]['hotels'], price, distance, max_size_page
+            )
+        if len(hotels[message.from_user.id]['hotels']) == 0:
+            bot.send_message(message.from_user.id, 'Не найдено вариантов. Повторить?', reply_markup=markup)
+            hotels.clear()
+            return
 
-    location = hotels[message.from_user.id]['location']
-    command = hotels[message.from_user.id]['command']
-    destination_id = hotels[message.from_user.id]['locations_list'][location]
-    max_size_page = int(hotels[message.from_user.id]['max_size'])
-    date_in = hotels[message.from_user.id]['date_in']
-    date_out = hotels[message.from_user.id]['date_out']
-    bot.send_message(message.from_user.id, 'Ищу варианты...', reply_markup=ReplyKeyboardRemove())
-    hotels[message.from_user.id]['hotels'] = rapidapi.hotel_info(destination_id, command, max_size_page, date_in, date_out)
-    if hotels[message.from_user.id]['hotels'] is None:
-        bot.send_message(message.from_user.id, 'Ошибка подключения. Попробуй позже.', reply_markup=markup)
-        return
-    for elem in hotels[message.from_user.id]['hotels']:
-        text = "\n\n".join((': '.join(('Отель', elem.name)),
-                            ': '.join(('Адрес', elem.address)),
-                            ': '.join(('Стоимость за все время', elem.price)),
-                            ': '.join(('Удаленность от центра', elem.distance))))
-        bot.send_message(message.from_user.id, text)
+        for elem in hotels[message.from_user.id]['hotels']:
+            text = "\n\n".join((': '.join(('Отель', elem.name)),
+                                ': '.join(('Адрес', elem.address)),
+                                ': '.join(('Стоимость за все время', elem.price)),
+                                ': '.join(('Удаленность от центра', elem.distance))))
+            bot.send_message(message.from_user.id, text)
 
-    bot.send_message(message.from_user.id, 'Продолжить?', reply_markup=markup)
+            if hotels[message.from_user.id]['show_photo'] == 'yes':
+                max_photos = hotels[message.from_user.id]['max_photos']
+                id_hotel = elem.id
+                urls = rapidapi.hotel_photo(hotel_id=id_hotel, max_photos=int(max_photos))
+                if urls is None:
+                    bot.send_message(message.from_user.id, 'Ошибка подключения. Попробуй позже.', reply_markup=markup)
+                    return
+                for url in urls:
+                    bot.send_photo(message.from_user.id, url)
+
+        bot.send_message(message.from_user.id, 'Продолжить?', reply_markup=markup)
+    except Exception:
+        bot.send_message(message.from_user.id, 'Извините, произошла ошибка. Повторить', reply_markup=markup)
+        hotels.clear()
 
 
 if __name__ == '__main__':
