@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 import requests
 from loguru import logger
+from requests.exceptions import ReadTimeout, ConnectTimeout, ConnectionError, Timeout, HTTPError
 
 
 class Hotel:
@@ -43,7 +44,13 @@ class RapidApi:
         try:
             logger.info('request rapidapi-search')
             response = requests.get(self.url_search, params=querystring, headers=headers, timeout=10)
-        except Exception:
+        except (ReadTimeout, ConnectTimeout, Timeout):
+            print('The request timed out or The server did not send any data in the allotted amount of time'
+                  'or The request timed out while trying to connect to the remote server.')
+            logger.error('Error in request rapidapi-search')
+            return None
+        except (ConnectionError, HTTPError):
+            print('A Connection error occurred or An HTTP error occurred.')
             logger.error('Error in request rapidapi-search')
             return None
 
@@ -55,7 +62,14 @@ class RapidApi:
         return destination_id
 
     @logger.catch
-    def select_best_hotels(self, hotels: List['Hotel'], max_price: float, max_distance: float, max_size: int):
+    def select_best_hotels(self, hotels: List['Hotel'], max_price: float, max_distance: float, max_size: int) -> List['Hotel']:
+        """Метод класса, отсортировывает отели из переданного списка
+        по условиям: не более максимальной стоимости max_price и
+        не дальше максимальной удаленности от центра города max_distance.
+
+        :return: list с объектами Hotel.
+        """
+
         res_list: List['Hotel'] = list()
         for hotel in hotels:
             if len(res_list) >= max_size:
@@ -81,12 +95,12 @@ class RapidApi:
         """
 
         sort_order = ''
-
-        if option == "low":
+        logger.info(''.join(('Выполняется команда ', option)))
+        if option == "lowprice":
             sort_order = 'PRICE'
-        elif option == "high":
+        elif option == "highprice":
             sort_order = 'PRICE_HIGHEST_FIRST'
-        elif option == "best":
+        elif option == "bestdeal":
             sort_order = 'DISTANCE_FROM_LANDMARK'
 
         headers = {
@@ -103,21 +117,31 @@ class RapidApi:
             max_size = self.max_size
 
         hotels: list = list()
-        querystring = {
-            "destinationId": f"{destination_id}", "pageNumber": "1", "pageSize": f"{max_size}",
-            "checkIn": f"{date_in}", "checkOut": f"{date_out}", "adults1": "1", "sortOrder": f"{sort_order}",
-            "locale": "ru_RU", "currency": "RUB"
-        }
+        if sort_order == 'DISTANCE_FROM_LANDMARK':
+            querystring = {
+                "destinationId": f"{destination_id}", "pageNumber": "1", "pageSize": f"{max_size}",
+                "checkIn": f"{date_in}", "checkOut": f"{date_out}", "adults1": "1", "sortOrder": f"{sort_order}",
+                "locale": "ru_RU", "currency": "RUB", "landmarkIds": "Центр города"
+            }
+        else:
+            querystring = {
+                "destinationId": f"{destination_id}", "pageNumber": "1", "pageSize": f"{max_size}",
+                "checkIn": f"{date_in}", "checkOut": f"{date_out}", "adults1": "1", "sortOrder": f"{sort_order}",
+                "locale": "ru_RU", "currency": "RUB"
+            }
 
         try:
             logger.info('request rapidapi-properties_list')
             response = requests.get(self.url_properties_list, params=querystring, headers=headers, timeout=10)
-        except Exception:
+        except (ReadTimeout, ConnectTimeout, Timeout):
+            print('The request timed out or The server did not send any data in the allotted amount of time '
+                  'or The request timed out while trying to connect to the remote server.')
             logger.error('Error in request rapidapi-properties_list')
-            if len(hotels) > 0:
-                return None
-            else:
-                return hotels
+            return None
+        except (ConnectionError, HTTPError):
+            print('A Connection error occurred or An HTTP error occurred.')
+            logger.error('Error in request rapidapi-properties_list')
+            return None
 
         hotel_dict = response.json()
         for elem in hotel_dict['data']['body']['searchResults']['results']:
@@ -155,7 +179,12 @@ class RapidApi:
         try:
             logger.info('request rapidapi-find_photo')
             response_dict = requests.get(self.url_hotel_photos, params=querystring, headers=headers, timeout=10).json()
-        except Exception:
+        except (ReadTimeout, ConnectTimeout, Timeout):
+            print('The request timed out or The server did not send any data in the allotted amount of time')
+            logger.error('Error in request rapidapi-find_photo')
+            return None
+        except (ConnectionError, HTTPError):
+            print('A Connection error occurred or An HTTP error occurred.')
             logger.error('Error in request rapidapi-find_photo')
             return None
 
